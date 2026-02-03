@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Glow - For my glow </title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        #canvas-container { width: 100vw; height: 100vh; }
+        
+        .letterbox {
+            position: absolute;
+            left: 0;
+            width: 100%;
+            height: 10vh;
+            background: #000;
+            z-index: 30;
+        }
+        .top { top: 0; }
+        .bottom { bottom: 0; }
+
+        .message-container {
+            position: absolute;
+            bottom: 16vh;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 90%;
+            max-width: 800px;
+            z-index: 20;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 2.5s ease-in-out;
+        }
+
+        .message {
+            color: rgba(255, 235, 190, 0.95);
+            font-family: 'Georgia', serif;
+            font-style: italic;
+            text-align: center;
+            font-size: clamp(0.9rem, 2.2vw, 1.2rem);
+            line-height: 1.6;
+            letter-spacing: 0.5px;
+            text-shadow: 0px 2px 15px rgba(0, 0, 0, 1);
+        }
+
+        .switch-container {
+            position: absolute;
+            bottom: 3vh;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .switch-label {
+            color: #444;
+            font-family: monospace;
+            font-size: 0.7rem;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        .toggle {
+            appearance: none;
+            width: 50px;
+            height: 26px;
+            background: #222;
+            border-radius: 13px;
+            position: relative;
+            cursor: pointer;
+            outline: none;
+            transition: background 0.3s;
+            border: 1px solid #333;
+        }
+
+        .toggle::before {
+            content: '';
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            background: #555;
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
+            transition: 0.3s;
+        }
+
+        .toggle:checked { background: #ffaa33; }
+        .toggle:checked::before {
+            left: 26px;
+            background: #fff;
+            box-shadow: 0 0 10px #fff;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="letterbox top"></div>
+    <div id="canvas-container"></div>
+    
+    <div class="message-container" id="msg-container">
+        <div class="message">
+            "I was just thinking about you and realized you’re basically a light bulb for my heart. Every time you're around, my little world lights up and everything feels so warm and cozy. Thanks for being my glow."
+        </div>
+    </div>
+
+    <div class="letterbox bottom">
+        <div class="switch-container">
+            <span class="switch-label">Light up</span>
+            <input type="checkbox" id="lightToggle" class="toggle">
+        </div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+        const CONFIG = {
+            bulbCount: 10,
+            baseColor: 0xffbb44,
+            ceilingHeight: 8,
+            bloomStrength: 1.8,
+        };
+
+        let isLightsOn = false;
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x020202);
+        scene.fog = new THREE.FogExp2(0x000000, 0.04);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 1, 13);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.toneMapping = THREE.ReinhardToneMapping;
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        const composer = new EffectComposer(renderer);
+        composer.addPass(new RenderPass(scene, camera));
+        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0, 0.8, 0.2);
+        composer.addPass(bloomPass);
+
+        scene.add(new THREE.AmbientLight(0x404040, 0.1));
+
+        // High-End Glass Material
+        const glassMaterial = new THREE.MeshPhysicalMaterial({
+            color: 0xffffff,
+            metalness: 0,
+            roughness: 0.02,
+            transmission: 0.98,
+            thickness: 1.0,
+            ior: 1.45,
+            clearcoat: 1.0,
+            clearcoatRoughness: 0.01,
+            transparent: true,
+            opacity: 0.5,
+            emissive: CONFIG.baseColor,
+            emissiveIntensity: 0
+        });
+
+        class HangingBulb {
+            constructor(x, z, wireLength, delay) {
+                this.group = new THREE.Group();
+                this.group.position.set(x, CONFIG.ceilingHeight, z);
+                this.angle = 0;
+                this.velocity = 0;
+                this.damping = 0.985;
+                this.length = wireLength;
+                this.phase = delay;
+
+                // Wire & Socket
+                const wire = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, this.length), new THREE.MeshStandardMaterial({color: 0x0a0a0a}));
+                wire.position.y = -this.length/2;
+                this.group.add(wire);
+
+                const socket = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 0.5), new THREE.MeshStandardMaterial({color: 0x1a1a1a, metalness: 0.8, roughness: 0.3}));
+                socket.position.y = -this.length;
+                this.group.add(socket);
+
+                // Edison Shape (Lathe)
+                const points = [];
+                for (let i = 0; i < 10; i++) {
+                    points.push(new THREE.Vector2(Math.sin(i * 0.3) * 0.45 + 0.1, (i - 5) * 0.15));
+                }
+                const bulbGeo = new THREE.SphereGeometry(0.5, 32, 32); 
+                this.bulb = new THREE.Mesh(bulbGeo, glassMaterial.clone());
+                this.bulb.scale.set(1, 1.3, 1); // Make it teardrop shaped
+                this.bulb.position.y = -this.length - 0.6;
+                this.group.add(this.bulb);
+
+                // Bright Filament
+                const filGeo = new THREE.CylinderGeometry(0.01, 0.01, 0.4);
+                this.filament = new THREE.Mesh(filGeo, new THREE.MeshBasicMaterial({color: 0xffaa00, transparent: true, opacity: 0}));
+                this.filament.position.y = -this.length - 0.6;
+                this.group.add(this.filament);
+
+                this.light = new THREE.PointLight(CONFIG.baseColor, 0, 15, 1.5);
+                this.light.position.y = -this.length - 0.6;
+                this.group.add(this.light);
+
+                scene.add(this.group);
+            }
+
+            update(time, mouseX) {
+                const wind = Math.sin(time * 0.0008 + this.phase) * 0.0004;
+                this.velocity += (-0.01 * Math.sin(this.angle)) + wind + (mouseX * 0.0001);
+                this.velocity *= this.damping;
+                this.angle += this.velocity;
+                this.group.rotation.x = this.angle;
+                this.group.rotation.z = this.angle * 0.2;
+
+                if (isLightsOn) {
+                    const flicker = 30 + Math.random() * 2; // Natural electric hum
+                    this.light.intensity = THREE.MathUtils.lerp(this.light.intensity, flicker, 0.05);
+                    this.bulb.material.emissiveIntensity = THREE.MathUtils.lerp(this.bulb.material.emissiveIntensity, 0.5, 0.05);
+                    this.filament.material.opacity = 1;
+                } else {
+                    this.light.intensity = THREE.MathUtils.lerp(this.light.intensity, 0, 0.1);
+                    this.bulb.material.emissiveIntensity = 0;
+                    this.filament.material.opacity = 0;
+                }
+            }
+        }
+
+        const bulbs = [];
+        for (let i = 0; i < CONFIG.bulbCount; i++) {
+            bulbs.push(new HangingBulb((i - 4.5) * 1.8, (Math.random()-0.5)*2.5, 4.5 + Math.random() * 3, i));
+        }
+
+        const toggle = document.getElementById('lightToggle');
+        const msg = document.getElementById('msg-container');
+        
+        toggle.addEventListener('change', (e) => {
+            isLightsOn = e.target.checked;
+            msg.style.opacity = isLightsOn ? "1" : "0";
+            bloomPass.strength = isLightsOn ? CONFIG.bloomStrength : 0;
+        });
+
+        let mouseX = 0;
+        document.addEventListener('mousemove', (e) => { mouseX = (e.clientX - window.innerWidth / 2) / 1500; });
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = Date.now();
+            camera.position.x += (mouseX * 4 - camera.position.x) * 0.02;
+            camera.lookAt(0, 2, 0);
+            bulbs.forEach(b => b.update(time, mouseX));
+            composer.render();
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+    </script>
+</body>
+</html>
